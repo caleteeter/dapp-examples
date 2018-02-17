@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "adminUsername": {
+      "type": "string"
+    },
+    "numNodes": {
+      "type": "int"
+    },
+    "artifactsLocationURL": {
+      "type": "string"
+    },
+    "dnsName": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "fqdn": {
+      "type": "string"
+    },
+    "vmNodePrefix": {
+      "type": "string"
+    }
+  },
+  "variables": {
+    "apiVersionVirtualMachinesExtensions": "2016-03-30",
+    "dockerfile": "docker-compose.yml"
+  },
+  "resources": [
+    {
+      "apiVersion": "[variables('apiVersionVirtualMachinesExtensions')]",
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "name": "[concat(parameters('dnsName'), copyIndex(), '/newuserscript')]",
+      "copy": {
+        "name": "extCopyLoop",
+        "count": "[parameters('numNodes')]"
+      },
+      "location": "[parameters('location')]",
+      "properties": {
+        "publisher": "Microsoft.Azure.Extensions",
+        "type": "CustomScript",
+        "typeHandlerVersion": "2.0",
+        "autoUpgradeMinorVersion": true,
+        "settings": {
+          "fileUris": [
+            "[concat(parameters('artifactsLocationURL'), '/scripts/config.sh')]"
+          ]
+        },
+        "protectedSettings": {
+          "commandToExecute": "[concat('/bin/bash config.sh \"', parameters('adminUsername'),'\" \"', copyIndex(), '\" \"', parameters('artifactsLocationURL'), '\" \"', parameters('fqdn'), '\" \"', parameters('vmNodePrefix'), '\"')]"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,319 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "namePrefix": {
+        "type": "string",
+        "metadata": {
+          "description": "String used as the name for the virtual machine"
+        },
+        "maxLength": 12
+      },
+      "authType": {
+        "type": "string",
+        "allowedValues": [
+          "password",
+          "sshPublicKey"
+        ],
+        "metadata": {
+          "description": "Authorization type for SSH access to VMs"
+        }
+      },
+      "adminUsername": {
+        "type": "string",
+        "defaultValue": "ipfsadmin",
+        "metadata": {
+          "description": "Administrator username of each deployed VM (alphanumeric characters only)"
+        }
+      },
+      "adminPassword": {
+        "type": "securestring",
+        "defaultValue": "",
+        "metadata": {
+          "description": "Administrator password for each deployed VM"
+        }
+      },
+      "adminSSHKey": {
+        "type": "string",
+        "defaultValue": "",
+        "metadata": {
+          "description": "SSH RSA public key file as a string"
+        }
+      },
+      "vmNodes": {
+        "type": "int",
+        "defaultValue": 1,
+        "maxValue": 10,
+        "minValue": 1,
+        "metadata": {
+          "description": "Number of IPFS nodes to create"
+        }
+      },
+      "vmStoragePerformance": {
+        "type": "string",
+        "defaultValue": "Premium",
+        "allowedValues": [
+          "Standard",
+          "Premium"
+        ],
+        "metadata": {
+          "description": "Storage performance level for ipfs virtual machines"
+        }
+      },
+      "vmSize": {
+        "type": "string",
+        "defaultValue": "Standard_DS3_v2",
+        "allowedValues": [
+          "Standard_D3_v2",
+          "Standard_D4_v2",
+          "Standard_DS3_v2",
+          "Standard_DS4_v2"
+        ],
+        "metadata": {
+          "description": "Size of the virtual machine used for ipfs nodes"
+        }
+      },
+      "location": {
+        "type": "string"
+      },
+      "baseUrl": {
+        "type": "string",
+        "metadata": {
+          "description": "The base URL for dependent assets",
+          "artifactsBaseUrl": ""
+        },
+        "defaultValue": "https://caleteetimages.blob.core.windows.net/sassets"
+      }
+    },
+    "variables": {
+      "apiVersionDeployments": "2016-09-01",
+      "apiVersionPublicIPAddresses": "2016-09-01",
+      "apiVersionAvailabilitySets": "2017-03-30",
+      "apiVersionNetworkSecurityGroups": "2016-09-01",
+      "apiVersionNetworkInterfaces": "2016-09-01",
+      "apiVersionVirtualMachines": "2017-03-30",
+      "apiVersionVirtualNetworks": "2016-09-01",
+      "apiVersionStorageAccounts": "2016-01-01",
+      "nameInfix": "[toLower(substring(concat(parameters('namePrefix'), uniqueString(resourceGroup().id)), 0, 9))]",
+      "availabilitySetName": "[concat(variables('nameInfix'), '-avset')]",
+      "dnsName": "[if(equals(parameters('authType'), 'password'), concat(variables('nameInfix'),'p'), concat(variables('nameInfix'),'s'))]",
+      "vmNamePrefix": "[variables('nameInfix')]",
+      "ipfsApiExtPort": 80,
+      "ipfsApiIntPort": 5001,
+      "sshStartingPort": 3000,
+      "sshIntPort": 22,
+      "subnetName": "[uniqueString(concat(resourceGroup().id, concat(variables('nameInfix'), 'subnet')))]",
+      "subnetPrefix": "10.1.0.0/24",
+      "nsgName": "[concat(variables('nameInfix'), '-nsg')]",
+      "nicPrefix": "[concat(variables('nameInfix'), '-nic')]",
+      "publicIpAddressName": "[concat(variables('nameInfix'), '-pip')]",
+      "loadBalancerName": "[concat(variables('nameInfix'), '-LB')]",
+      "loadBalancerBackendAddressPoolName": "ipfsbackend",
+      "loadBalancerInboundNatRuleNamePrefix": "Nat",
+      "loadBalancerID": "[resourceId('Microsoft.Network/loadBalancers', variables('loadBalancerName'))]",
+      "loadBalancerBackendAddressPoolID": "[concat(variables('loadBalancerID'), '/backendAddressPools/', variables('loadBalancerBackendAddressPoolName'))]",
+      "loadBalancerInboundNatRuleIDprefix": "[concat(variables('loadBalancerID'),'/inboundNatRules/',variables('loadBalancerInboundNatRuleNamePrefix'))]",
+      "ipfsBackendLbConfig": [{ "id": "[variables('loadBalancerBackendAddressPoolID')]" }],
+      "subnetPropertiesArray": [
+        {
+          "name": "[variables('subnetName')]",
+          "properties": {
+            "addressPrefix": "[variables('subnetPrefix')]"
+          }
+        }
+      ],
+      "ubuntuImage": {
+        "publisher": "Canonical",
+        "offer": "UbuntuServer",
+        "sku": "16.04.0-LTS",
+        "version": "latest"
+      },
+      "vNet": {
+        "name": "[concat(variables('nameInfix'), '-vnet')]",
+        "addressSpacePrefix": "10.1.0.0/20"
+      },
+      "vnetID": "[resourceId('Microsoft.Network/virtualNetworks', variables('vNet').name)]",
+      "subnetRef": "[concat(variables('vnetID'),'/subnets/', variables('subnetName'))]"
+    },
+    "resources": [
+      {
+        "apiVersion": "[variables('apiVersionAvailabilitySets')]",
+        "type": "Microsoft.Compute/availabilitySets",
+        "name": "[variables('availabilitySetName')]",
+        "location": "[parameters('location')]",
+        "sku": {
+          "name": "Aligned"
+        },
+        "properties": {
+          "platformUpdateDomainCount": 2,
+          "platformFaultDomainCount": 2
+        }
+      },
+      {
+        "apiVersion": "[variables('apiVersionPublicIPAddresses')]",
+        "type": "Microsoft.Network/publicIPAddresses",
+        "name": "[variables('publicIpAddressName')]",
+        "location": "[parameters('location')]",
+        "properties": {
+          "publicIPAllocationMethod": "Dynamic",
+          "dnsSettings": {
+            "domainNameLabel": "[variables('dnsName')]"
+          }
+        }
+      },
+      {
+        "apiVersion": "[variables('apiVersionDeployments')]",
+        "name": "loadBalancerLinkedTemplate",
+        "type": "Microsoft.Resources/deployments",
+        "dependsOn": [
+          "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIpAddressName'))]"
+        ],
+        "properties": {
+          "mode": "Incremental",
+          "templateLink": {
+            "uri": "[concat(parameters('baseUrl'), '/nested/loadBalancer.json')]",
+            "contentVersion": "1.0.0.0"
+          },
+          "parameters": {
+            "loadBalancerName": {"value": "[variables('loadBalancerName')]"},
+            "dnsHostName":{"value": "[variables('nameInfix')]"},
+            "loadBalancerBackendAddressPoolName":{"value": "[variables('loadBalancerBackendAddressPoolName')]"},
+            "loadBalancerInboundNatRuleNamePrefix":{"value": "[variables('loadBalancerInboundNatRuleNamePrefix')]"},
+            "frontendPort1":{"value": "[variables('ipfsApiExtPort')]"},
+            "backendPort1":{"value": "[variables('ipfsApiIntPort')]"},
+            "numInboundNATRules":{"value": "[parameters('vmNodes')]"},
+            "inboundNATRuleSSHStartingPort":{"value": "[variables('sshStartingPort')]"},
+            "inboundNATRuleSSHBackendPort":{"value": "[variables('sshIntPort')]"},
+            "publicIPAddressName":{"value": "[variables('publicIPAddressName')]"},
+            "location":{"value": "[parameters('location')]"}
+          }
+        }
+      },
+      {
+        "apiVersion": "[variables('apiVersionNetworkSecurityGroups')]",
+        "type": "Microsoft.Network/networkSecurityGroups",
+        "name": "[variables('nsgName')]",
+        "location": "[parameters('location')]",
+        "tags": {
+          "displayName": "Network Security Group"
+        },
+        "properties": {
+          "securityRules": [
+            {
+              "name": "allow-ssh",
+              "properties": {
+                "description": "Allow SSH",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "[variables('sshIntPort')]",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "*",
+                "access": "Allow",
+                "priority": 100,
+                "direction": "Inbound"
+              }
+            },
+            {
+              "name": "allow-ipfs-api",
+              "properties": {
+                "description": "Allow public access to ipfs api",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "[variables('ipfsApiIntPort')]",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "*",
+                "access": "Allow",
+                "priority": 102,
+                "direction": "Inbound"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "[variables('apiVersionVirtualNetworks')]",
+        "type": "Microsoft.Network/virtualNetworks",
+        "name": "[variables('vNet').name]",
+        "location": "[parameters('location')]",
+        "dependsOn": [
+          "[concat('Microsoft.Network/networkSecurityGroups/', variables('nsgName'))]"
+        ],
+        "properties": {
+          "addressSpace": {
+            "addressPrefixes": [
+              "[variables('vNet').addressSpacePrefix]"
+            ]
+          },
+          "subnets": "[variables('subnetPropertiesArray')]"
+        }
+      },
+      {
+        "apiVersion": "[variables('apiVersionDeployments')]",
+        "name": "vmLinkedTemplate",
+        "type": "Microsoft.Resources/deployments",
+        "dependsOn": [
+          "[concat('Microsoft.Network/virtualNetworks/', variables('vNet').name)]",
+          "[concat('Microsoft.Compute/availabilitySets/', variables('availabilitySetName'))]",
+          "loadBalancerLinkedTemplate"
+        ],
+        "properties": {
+          "mode": "Incremental",
+          "templateLink": {
+            "uri": "[concat(parameters('baseUrl'), '/nested/VM.json')]",
+            "contentVersion": "1.0.0.0"
+          },
+          "parameters": {
+            "authType": { "value": "[parameters('authType')]"},
+            "apiVersionVirtualMachines": { "value": "[variables('apiVersionVirtualMachines')]" },
+            "apiVersionNetworkInterfaces": { "value": "[variables('apiVersionNetworkInterfaces')]" },
+            "numNodes": { "value": "[parameters('vmNodes')]"},
+            "nodeStoragePerformance": { "value": "[parameters('vmStoragePerformance')]"},
+            "loadBalancerBackendPools": { "value": "[variables('ipfsBackendLbConfig')]"},
+            "loadBalancerInboundNatRuleIDprefix": { "value": "[variables('loadBalancerInboundNatRuleIDprefix')]"},
+            "availabilitySetName": { "value": "[variables('availabilitySetName')]" },
+            "nicPrefix": { "value": "[variables('nicPrefix')]" },
+            "subnetRef": { "value": "[variables('subnetRef')]" },
+            "vmNamePrefix": { "value": "[variables('vmNamePrefix')]" },
+            "vmSize": { "value": "[parameters('vmSize')]" },
+            "adminUsername": { "value": "[parameters('adminUsername')]" },
+            "adminPassword": { "value": "[parameters('adminPassword')]" },
+            "adminSSHKey": { "value": "[parameters('adminSSHKey')]" },
+            "ubuntuImage": { "value": "[variables('ubuntuImage')]" },
+            "namingInfix": { "value": "[variables('nameInfix')]" },
+            "location": { "value": "[parameters('location')]" },
+            "offset": { "value": 0 }
+          }
+        }
+      },
+      {
+        "apiVersion": "[variables('apiVersionDeployments')]",
+        "name": "vmExtensionLinkedTemplate",
+        "type": "Microsoft.Resources/deployments",
+        "dependsOn": [
+          "vmLinkedTemplate"
+        ],
+        "properties": {
+          "mode": "Incremental",
+          "templateLink": {
+            "uri": "[concat(parameters('baseUrl'), '/nested/VMExtension.json')]",
+            "contentVersion": "1.0.0.0"
+          },
+          "parameters": {
+            "adminUsername":{"value": "[parameters('adminUsername')]"},
+            "numNodes":{"value": "[parameters('vmNodes')]"},
+            "artifactsLocationURL":{"value": "[parameters('baseUrl')]"},
+            "dnsName":{"value": "[variables('dnsName')]"},
+            "location":{"value": "[parameters('location')]"},
+            "fqdn":{"value": "[reference(concat('Microsoft.Network/publicIPAddresses/', variables('publicIpAddressName')), variables('apiVersionPublicIPAddresses')).dnsSettings.fqdn]"},
+            "vmNodePrefix":{"value": "[variables('vmNamePrefix')]"}
+          }
+        }
+      }
+    ],
+    "outputs": {
+      "dnsName": {
+        "type": "string",
+        "value": "[reference(variables('publicIpAddressName')).dnsSettings.fqdn]"
+      }
+    }
+  }

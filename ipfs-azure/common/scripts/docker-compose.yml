@@ -1,0 +1,12 @@
+version: "3"
+services:
+  ipfs-node:
+    environment:
+    - IPFS_VERSION=0.4.13
+    - BOOTNODEIP=#NODE_IP
+    - NODEID=#NODE_ID
+    image: ipfspriv.azurecr.io/ipfs/azure:latest
+    restart: always
+    ports: 
+    - 4001:4001
+    - 5001:5001
