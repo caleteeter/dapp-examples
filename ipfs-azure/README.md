@@ -10,4 +10,4 @@ Creating these network is not difficult, however, for private networks, we can m
 
 The high level architecture of this template is:
 
-![hla](/assets/ipfs-azure.png)
+![hla](https://github.com/caleteeter/dapp-examples/blob/master/ipfs-azure/assets/ipfs-azure.png)
